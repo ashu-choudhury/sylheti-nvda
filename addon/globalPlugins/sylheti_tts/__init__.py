@@ -15,7 +15,6 @@ _lib = None
 _plugin_dir = os.path.dirname(__file__)
 is_64bit = ctypes.sizeof(ctypes.c_void_p) == 8
 
-# Priority candidate DLLs based on NVDA Python architecture
 candidate_dlls = []
 if is_64bit:
     candidate_dlls = ["sylheti_phonetics_x64.dll", "sylheti_phonetics.dll"]
@@ -32,7 +31,7 @@ for dll_name in candidate_dlls:
             temp_lib.sylheti_free_string.argtypes = [ctypes.c_void_p]
             temp_lib.sylheti_free_string.restype = None
             _lib = temp_lib
-            log.info("sylheti_tts: Loaded %s (64-bit=%s)" % (dll_name, is_64bit))
+            log.info("sylheti_tts: Successfully loaded %s (64-bit=%s)" % (dll_name, is_64bit))
             break
         except Exception as e:
             log.error("sylheti_tts: Error loading %s: %s" % (dll_name, e), exc_info=True)
@@ -66,7 +65,7 @@ def convert_text(text: str) -> str:
         finally:
             _lib.sylheti_free_string(ptr)
     except Exception as e:
-        log.error("sylheti_tts error converting %r: %s" % (text, e), exc_info=True)
+        log.error("sylheti_tts: Error converting %r: %s" % (text, e), exc_info=True)
         return text
 
 
@@ -91,22 +90,22 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         super().terminate()
 
     def filterSpeech(self, speechSequence):
-        if not self.enabled:
-            return
+        if not self.enabled or not speechSequence:
+            return speechSequence
 
         try:
             new_sequence = []
             for item in speechSequence:
                 if isinstance(item, str):
                     converted = convert_text(item)
-                    # Guaranteed: Never append empty string, always fallback to original item
                     new_sequence.append(converted if converted else item)
                 else:
                     new_sequence.append(item)
 
-            speechSequence[:] = new_sequence
+            return new_sequence
         except Exception as e:
             log.error("sylheti_tts: Error in filterSpeech: %s" % e, exc_info=True)
+            return speechSequence
 
     @scriptHandler.script(
         description="Toggles Sylheti speech transliteration on or off.",
