@@ -5,7 +5,6 @@
 
 import ctypes
 import os
-import re
 import globalPluginHandler
 import scriptHandler
 import speech
@@ -16,7 +15,7 @@ _lib = None
 _plugin_dir = os.path.dirname(__file__)
 is_64bit = ctypes.sizeof(ctypes.c_void_p) == 8
 
-# Priority candidate DLLs based on architecture
+# Priority candidate DLLs based on NVDA Python architecture
 candidate_dlls = []
 if is_64bit:
     candidate_dlls = ["sylheti_phonetics_x64.dll", "sylheti_phonetics.dll"]
@@ -33,7 +32,7 @@ for dll_name in candidate_dlls:
             temp_lib.sylheti_free_string.argtypes = [ctypes.c_void_p]
             temp_lib.sylheti_free_string.restype = None
             _lib = temp_lib
-            log.info("sylheti_tts: Successfully loaded %s (64-bit=%s)" % (dll_name, is_64bit))
+            log.info("sylheti_tts: Loaded %s (64-bit=%s)" % (dll_name, is_64bit))
             break
         except Exception as e:
             log.error("sylheti_tts: Error loading %s: %s" % (dll_name, e), exc_info=True)
@@ -41,78 +40,33 @@ for dll_name in candidate_dlls:
 if not _lib:
     log.error("sylheti_tts: Could not load any compatible sylheti_phonetics DLL for 64-bit=%s" % is_64bit)
 
-# Common Sylheti markers to distinguish Sylheti messages from general Windows UI text
-SYLHETI_MARKERS = {
-    "kila", "keela", "killa", "aso", "asho", "acho", "asi", "ashi", "achi",
-    "bala", "bhala", "baala", "khani", "khaani", "fani", "faani", "pani",
-    "zairam", "jairam", "sairam", "zao", "jao", "zaitam", "jaitam", "zaiba", "jaiba",
-    "khoro", "koro", "khorray", "korray", "khorbo", "korbo", "khoriya", "koriya",
-    "khaiso", "khaiba", "khamu", "boiya", "jiroiram", "zirairam", "dekhi", "dekhba",
-    "kotha", "khotha", "koitam", "koytam", "ajke", "aji", "kalike", "kailke",
-    "bihane", "behane", "shonjebela", "sonjebela", "raite", "rayte", "ekhon", "aikhon",
-    "bade", "baade", "ghor", "ghoro", "bazar", "dukan", "khosoba", "roid", "biromber",
-    "oigese", "lagbo", "shonge", "songe", "kita", "kono", "koy", "khene", "kisu", "kichu",
-    "emne", "cha", "bhat", "salun", "gusto", "gush", "fua", "pua", "furi", "puri",
-    "amra", "tumra", "tain", "tore", "bhai", "bhay", "bon", "boin", "ni",
-}
-
-
-def should_transliterate(text: str) -> bool:
-    """Checks if the text contains recognizable Sylheti vocabulary or Nagri script."""
-    if not text:
-        return False
-
-    # If text already contains Sylheti Nagri Unicode characters, transliterate
-    for ch in text:
-        if 0xA800 <= ord(ch) <= 0xA82F:
-            return True
-
-    # Check words against Sylheti marker set
-    tokens = re.findall(r"[A-Za-z]+", text.lower())
-    for token in tokens:
-        if token in SYLHETI_MARKERS:
-            return True
-
-    return False
-
 
 def convert_text(text: str) -> str:
     """
-    Converts Romanized Sylheti text to Hindi Devanagari phonetics.
-    ALWAYS returns the original text on any failure or if the text is not Sylheti.
+    Converts text using the native sylheti_phonetics engine.
+    Guaranteed: On ANY error, null return, or empty result, ALWAYS returns the original text.
     """
     global _lib
-    if not text or not text.strip():
-        return text
-
-    # Only modify text that actually contains Sylheti words
-    # This prevents Windows UI (Desktop, Taskbar, Menus) from being turned into Devanagari!
-    if not should_transliterate(text):
-        return text
-
-    if not _lib:
-        log.debug("sylheti_tts: Library not loaded; returning original text")
+    if not text or not text.strip() or not _lib:
         return text
 
     try:
         encoded = text.encode("utf-8")
         ptr = _lib.sylheti_convert_to_hindi(encoded)
         if not ptr:
-            log.warning("sylheti_tts: Native function returned null pointer for input: %r" % text)
             return text
 
         try:
             converted_bytes = ctypes.string_at(ptr)
             if converted_bytes:
-                converted_str = converted_bytes.decode("utf-8")
-                # Safety check: if converted string is empty, fallback to original
-                if converted_str and converted_str.strip():
-                    return converted_str
+                result = converted_bytes.decode("utf-8")
+                if result and result.strip():
+                    return result
             return text
         finally:
             _lib.sylheti_free_string(ptr)
     except Exception as e:
-        log.error("sylheti_tts: Conversion exception on %r: %s" % (text, e), exc_info=True)
+        log.error("sylheti_tts error converting %r: %s" % (text, e), exc_info=True)
         return text
 
 
@@ -143,17 +97,16 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         try:
             new_sequence = []
             for item in speechSequence:
-                if isinstance(item, str) and item.strip():
+                if isinstance(item, str):
                     converted = convert_text(item)
-                    # Guaranteed: Never append an empty string!
+                    # Guaranteed: Never append empty string, always fallback to original item
                     new_sequence.append(converted if converted else item)
                 else:
                     new_sequence.append(item)
 
             speechSequence[:] = new_sequence
         except Exception as e:
-            # Absolute failsafe: NVDA must NEVER stop speaking
-            log.error("sylheti_tts: Critical error in filterSpeech: %s" % e, exc_info=True)
+            log.error("sylheti_tts: Error in filterSpeech: %s" % e, exc_info=True)
 
     @scriptHandler.script(
         description="Toggles Sylheti speech transliteration on or off.",
