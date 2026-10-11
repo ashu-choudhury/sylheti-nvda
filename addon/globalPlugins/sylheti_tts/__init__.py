@@ -1,0 +1,97 @@
+# -*- coding: utf-8 -*-
+# Sylheti TTS Transliteration NVDA Add-on
+# Author: ashu-choudhury
+# License: MIT
+
+import ctypes
+import os
+import globalPluginHandler
+import scriptHandler
+import speech
+import ui
+from logHandler import log
+
+# Initialize Rust FFI library
+_lib = None
+_dll_path = os.path.join(os.path.dirname(__file__), "sylheti_phonetics.dll")
+
+try:
+    if os.path.isfile(_dll_path):
+        _lib = ctypes.CDLL(_dll_path)
+        _lib.sylheti_convert_to_hindi.argtypes = [ctypes.c_char_p]
+        _lib.sylheti_convert_to_hindi.restype = ctypes.c_void_p
+        _lib.sylheti_free_string.argtypes = [ctypes.c_void_p]
+        _lib.sylheti_free_string.restype = None
+        log.info("sylheti_tts: Loaded native Rust engine from %s" % _dll_path)
+    else:
+        log.warning("sylheti_tts: sylheti_phonetics.dll not found at %s" % _dll_path)
+except Exception as e:
+    log.error("sylheti_tts: Failed to load sylheti_phonetics.dll: %s" % e)
+
+
+def convert_text(text: str) -> str:
+    """Converts Romanized Sylheti text to Hindi Devanagari phonetics using the native Rust library."""
+    global _lib
+    if not text or not _lib:
+        return text
+
+    try:
+        encoded = text.encode("utf-8")
+        ptr = _lib.sylheti_convert_to_hindi(encoded)
+        if not ptr:
+            return text
+        try:
+            converted_bytes = ctypes.cast(ptr, ctypes.c_char_p).value
+            if converted_bytes:
+                return converted_bytes.decode("utf-8")
+            return text
+        finally:
+            _lib.sylheti_free_string(ptr)
+    except Exception as e:
+        log.debug("sylheti_tts conversion error: %s" % e)
+        return text
+
+
+class GlobalPlugin(globalPluginHandler.GlobalPlugin):
+    scriptCategory = "Sylheti TTS"
+
+    def __init__(self):
+        super().__init__()
+        self.enabled = True
+        try:
+            speech.filter_speechSequence.register(self.filterSpeech)
+            log.info("sylheti_tts: Registered speech filter hook.")
+        except Exception as e:
+            log.error("sylheti_tts: Failed to register filter_speechSequence: %s" % e)
+
+    def terminate(self):
+        try:
+            speech.filter_speechSequence.unregister(self.filterSpeech)
+            log.info("sylheti_tts: Unregistered speech filter hook.")
+        except Exception as e:
+            log.error("sylheti_tts: Failed to unregister filter_speechSequence: %s" % e)
+        super().terminate()
+
+    def filterSpeech(self, speechSequence):
+        if not self.enabled:
+            return
+
+        new_sequence = []
+        for item in speechSequence:
+            if isinstance(item, str):
+                new_sequence.append(convert_text(item))
+            else:
+                new_sequence.append(item)
+
+        speechSequence[:] = new_sequence
+
+    @scriptHandler.script(
+        description="Toggles Sylheti speech transliteration on or off.",
+        gesture="kb:NVDA+shift+y",
+    )
+    def script_toggleSylheti(self, gesture):
+        self.enabled = not self.enabled
+        if self.enabled:
+            ui.message("Sylheti transliteration enabled")
+        else:
+            ui.message("Sylheti transliteration disabled")
