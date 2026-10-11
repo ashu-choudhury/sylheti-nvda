@@ -11,22 +11,33 @@ import speech
 import ui
 from logHandler import log
 
-# Initialize Rust FFI library
 _lib = None
-_dll_path = os.path.join(os.path.dirname(__file__), "sylheti_phonetics.dll")
+_plugin_dir = os.path.dirname(__file__)
+is_64bit = ctypes.sizeof(ctypes.c_void_p) == 8
 
-try:
-    if os.path.isfile(_dll_path):
-        _lib = ctypes.CDLL(_dll_path)
-        _lib.sylheti_convert_to_hindi.argtypes = [ctypes.c_char_p]
-        _lib.sylheti_convert_to_hindi.restype = ctypes.c_void_p
-        _lib.sylheti_free_string.argtypes = [ctypes.c_void_p]
-        _lib.sylheti_free_string.restype = None
-        log.info("sylheti_tts: Loaded native Rust engine from %s" % _dll_path)
-    else:
-        log.warning("sylheti_tts: sylheti_phonetics.dll not found at %s" % _dll_path)
-except Exception as e:
-    log.error("sylheti_tts: Failed to load sylheti_phonetics.dll: %s" % e)
+candidate_dlls = []
+if is_64bit:
+    candidate_dlls = ["sylheti_phonetics_x64.dll", "sylheti_phonetics.dll"]
+else:
+    candidate_dlls = ["sylheti_phonetics_x86.dll", "sylheti_phonetics.dll"]
+
+for dll_name in candidate_dlls:
+    dll_path = os.path.join(_plugin_dir, dll_name)
+    if os.path.isfile(dll_path):
+        try:
+            temp_lib = ctypes.CDLL(dll_path)
+            temp_lib.sylheti_convert_to_hindi.argtypes = [ctypes.c_char_p]
+            temp_lib.sylheti_convert_to_hindi.restype = ctypes.c_void_p
+            temp_lib.sylheti_free_string.argtypes = [ctypes.c_void_p]
+            temp_lib.sylheti_free_string.restype = None
+            _lib = temp_lib
+            log.info("sylheti_tts: Successfully loaded %s (is_64bit=%s)" % (dll_name, is_64bit))
+            break
+        except Exception as e:
+            log.debug("sylheti_tts: Could not load %s: %s" % (dll_name, e))
+
+if not _lib:
+    log.error("sylheti_tts: Could not load any compatible sylheti_phonetics DLL for is_64bit=%s" % is_64bit)
 
 
 def convert_text(text: str) -> str:
