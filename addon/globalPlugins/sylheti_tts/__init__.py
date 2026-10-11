@@ -107,13 +107,16 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             log.error("sylheti_tts: Error in filterSpeech: %s" % e, exc_info=True)
             return speechSequence
 
-    @scriptHandler.script(
-        description="Toggles Sylheti speech transliteration on or off.",
-        gesture="kb:NVDA+shift+y",
-    )
     def script_toggleSylheti(self, gesture):
         self.enabled = not self.enabled
         if self.enabled:
             ui.message("Sylheti transliteration enabled")
         else:
             ui.message("Sylheti transliteration disabled")
+
+    script_toggleSylheti.category = "Sylheti TTS"
+    script_toggleSylheti.__doc__ = "Toggles Sylheti speech transliteration on or off."
+
+    __gestures = {
+        "kb:nvda+shift+y": "toggleSylheti",
+    }
